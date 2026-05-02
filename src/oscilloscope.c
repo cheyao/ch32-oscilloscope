@@ -12,60 +12,35 @@
 // Can use this time to perform computations
 #define SCROLL_DELAY 12500
 
+#define LED_BUILTIN PC0
+#define BUTTON_TRIG PD2
+#define BUTTON_SWITCH PD0
+
 // 0-1023
 volatile uint16_t adc_buffer[3];
 uint8_t mode = 0;
 uint8_t sample = 3;
 
-void set_bit(uint8_t* data, const uint16_t adc) { data[7 - (adc / 128)] |= (1 << (7 - ((adc % 128) / 16))); }
+void set_bit(uint8_t* data, uint16_t adc) {
+	adc = adc > 1023 ? 1023 : adc;
+	data[7 - (adc / 128)] |= (1 << (7 - ((adc % 128) / 16)));
+}
 void updategraph(void);
 void setup(void);
-void trigger(void);
+int trigger(void);
 void clear_screen(void);
 void scroll(void);
 
 int main() {
 	SystemInit();
 	setup();
-	funDigitalWrite(PC0, FUN_HIGH);
 
-	uint8_t trig_last = 1;
+	uint8_t trig_last = funDigitalRead(BUTTON_TRIG);
 	while (1) {
-		const uint8_t trig = funDigitalRead(PD2);
+		const uint8_t trig = funDigitalRead(BUTTON_TRIG);
 		if (trig_last != trig && trig == 0) {
-			trigger();
-
-			Delay_Ms(200);
-			uint8_t trig_last = funDigitalRead(PD2);
-			uint8_t button_last = funDigitalRead(PD0);
-			while (1) {
-				const uint8_t trig = funDigitalRead(PD2);
-				const uint8_t button = funDigitalRead(PD0);
-
-				if (trig_last != trig && trig == 0) {
-					break;
-				}
-				if (button_last != button && button == 0) {
-					sample = (sample >= 7) ? 0 : sample + 1;
-
-					ADC1->SAMPTR2 &= ~(ADC_SMP0 | ADC_SMP1 | ADC_SMP2);
-					ADC1->SAMPTR2 |=
-						(sample << (3 * 0)) | (sample << (3 * 1)) | (sample << (3 * 2));
-
-					ADC1->CTLR2 |= CTLR2_RSTCAL_Set;
-					while (ADC1->CTLR2 & CTLR2_RSTCAL_Set)
-						;
-
-					ADC1->CTLR2 |= CTLR2_CAL_Set;
-					while (ADC1->CTLR2 & CTLR2_CAL_Set)
-						;
-
-					trigger();
-				}
-
-				trig_last = trig;
-				button_last = button;
-			}
+			while (trigger())
+				;
 		} else {
 			updategraph();
 		}
@@ -77,7 +52,7 @@ int main() {
 void setup(void) {
 	funGpioInitAll();
 
-	// Auto-boot
+	// Reset into bootloader
 	if (FLASH->STATR & (1 << 14)) {
 		NVIC_SystemReset();
 	}
@@ -89,14 +64,18 @@ void setup(void) {
 	FLASH->CTLR = CR_LOCK_Set;
 	funPinMode(PD4, GPIO_CFGLR_OUT_10Mhz_PP);
 
-	// Buttons
-	funPinMode(PD2, GPIO_Speed_In | GPIO_CNF_IN_PUPD);
-	funDigitalWrite(PD2, FUN_HIGH);
-	funPinMode(PD0, GPIO_Speed_In | GPIO_CNF_IN_PUPD);
-	funDigitalWrite(PD0, FUN_HIGH);
 	// GND for button PD0
 	funPinMode(PC6, GPIO_Speed_2MHz | GPIO_CNF_OUT_PP);
 	funDigitalWrite(PC6, FUN_LOW);
+
+	// Buttons
+	funPinMode(BUTTON_TRIG, GPIO_Speed_In | GPIO_CNF_IN_PUPD);
+	funDigitalWrite(BUTTON_TRIG, FUN_HIGH);
+	funPinMode(BUTTON_SWITCH, GPIO_Speed_In | GPIO_CNF_IN_PUPD);
+	funDigitalWrite(BUTTON_SWITCH, FUN_HIGH);
+
+	// LED
+	funPinMode(LED_BUILTIN, GPIO_Speed_10MHz | GPIO_CNF_OUT_PP);
 
 	// ADCPRE[4:0] = 0; (Negative mask)
 	// ADC clock = HBCLK / 2
@@ -111,8 +90,6 @@ void setup(void) {
 	funPinMode(PA1, GPIO_Speed_In | GPIO_CNF_IN_ANALOG);
 	// A2
 	funPinMode(PC4, GPIO_Speed_In | GPIO_CNF_IN_ANALOG);
-	// LED
-	funPinMode(PC0, GPIO_Speed_10MHz | GPIO_CNF_OUT_PP);
 
 	// Reset ADC.
 	RCC->APB2PRSTR |= RCC_APB2Periph_ADC1;
@@ -170,9 +147,11 @@ void setup(void) {
 	}
 
 	clear_screen();
+
+	funDigitalWrite(LED_BUILTIN, FUN_HIGH);
 }
 
-void trigger(void) {
+int trigger(void) {
 	clear_screen();
 
 	// Free the ram asap
@@ -181,11 +160,10 @@ void trigger(void) {
 	uint16_t buffer2[128];
 
 	// Clear EOC
-	ADC1->STATR &= ~ADC_EOC;
 	for (uint8_t i = 0; i < 128; ++i) {
-		while ((ADC1->STATR & ADC_EOC) == 0)
+		while (!(DMA1->INTFR & DMA1_FLAG_TC1))
 			;
-		ADC1->STATR &= ~ADC_EOC;
+		DMA1->INTFCR = DMA1_FLAG_TC1;
 
 		buffer0[i] = adc_buffer[0];
 		buffer1[i] = adc_buffer[1];
@@ -220,6 +198,41 @@ void trigger(void) {
 
 		ssd1306_data(data, 8);
 	}
+
+	Delay_Ms(300);
+
+	uint8_t trigger_last = 0;
+	uint8_t trigger = funDigitalRead(BUTTON_TRIG);
+
+	uint8_t button_last = 0;
+	uint8_t button = funDigitalRead(BUTTON_SWITCH);
+
+	do {
+		trigger_last = trigger;
+		trigger = funDigitalRead(BUTTON_TRIG);
+
+		button_last = button;
+		button = funDigitalRead(BUTTON_SWITCH);
+
+		// Re-run
+		if (button_last != button && button == 0) {
+			Delay_Ms(500);
+			if (funDigitalRead(BUTTON_SWITCH) == 0) {
+				sample = (sample == 7) ? 0 : sample + 1;
+
+				ADC1->CTLR2 &= ~ADC_CONT;
+
+				ADC1->SAMPTR2 = (sample << (3 * 0)) | (sample << (3 * 1)) | (sample << (3 * 2));
+
+				ADC1->CTLR2 |= ADC_CONT;
+				ADC1->CTLR2 |= ADC_SWSTART;
+			}
+
+			return 1;
+		}
+	} while (trigger_last == trigger || trigger != 0);
+
+	return 0;
 }
 
 void updategraph(void) {
@@ -235,26 +248,22 @@ void updategraph(void) {
 	ssd1306_cmd(0);
 	ssd1306_cmd(7);
 
-	// Overwrite the last column
-	uint8_t data[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-
-	uint8_t button_last = 1;
-	const uint8_t button = funDigitalRead(PD0);
+	static uint8_t button_last = 1;
+	const uint8_t button = funDigitalRead(BUTTON_SWITCH);
 	if (button_last != button && button == 0) {
 		mode = (mode == 3) ? 0 : mode + 1;
 	}
 	button_last = button;
 
-	// 0-1023, normalize to 0-63
-	if (mode == 0 || mode == 3) {
+	// Overwrite the last column
+	uint8_t data[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+	if (mode == 0 || mode == 3)
 		set_bit(data, adc_buffer[0]);
-	}
-	if (mode == 1 || mode == 3) {
+	if (mode == 1 || mode == 3)
 		set_bit(data, adc_buffer[1]);
-	}
-	if (mode == 2 || mode == 3) {
+	if (mode == 2 || mode == 3)
 		set_bit(data, adc_buffer[2]);
-	}
 
 	ssd1306_data(data, 8);
 
