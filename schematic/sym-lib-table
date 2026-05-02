@@ -1,0 +1,4 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "UIAPduino") (type "KiCad") (uri "/home/cyao/Developer/oscillo/schematic/UIAP-Devices.kicad_sym") (options "") (descr ""))
+)

@@ -17,6 +17,9 @@ Build the board however you like! It'll work.
 Diagram:
 
 ![](https://cyao.dev/1000005402.webp)
+![](https://cyao.dev/schematic.webp)
+
+See schematic of the circuit in `schematic` directory.
 
 ## Firmware
 
