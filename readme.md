@@ -4,6 +4,14 @@
 
 See [demo video](demo.mp4)
 
+- Input range: 0-5V
+- Max sampling speed: 6MHz
+- Accuracy: Pretty accurate.
+- Noise: NaN μVrms
+- Max. Sample Rate: 256 S/s (Assuming you can press a button at 2Hz)
+- Input Impedance: Depends...
+- Price: $2.9 per unit.
+
 ## Routing
 
 Oled should be connected to the only I2C port. The data lines need a 2k pull-up resistor each.
